@@ -9,8 +9,13 @@ from more_itertools import chunked
 
 MAX_CHUNK = 10
 BUFFER = dict()
+HEADERS = {
+    "Accept": "*/*",
+    "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)\
+    AppleWebKit/537.36 (KHTML, like Gecko) Chrome/102.0.5005.167 YaBrowser/22.7.3.799 Yowser/2.5 Safari/537.36"
+    }
 
-async def get_extra_items(session, people_json: dict, params: tuple) -> None:
+async def get_extra_items_by_list(session, people_json: dict, params: tuple, headers: dict=HEADERS) -> None:
     items = list()
 
     for item in people_json[params[0]]:
@@ -18,17 +23,26 @@ async def get_extra_items(session, people_json: dict, params: tuple) -> None:
             items.append(BUFFER[item])
 
         else:
-            async with session.get(item, headers = {
-                "Accept": "*/*",
-                "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)\
-                AppleWebKit/537.36 (KHTML, like Gecko) Chrome/102.0.5005.167 YaBrowser/22.7.3.799 Yowser/2.5 Safari/537.36"
-            }) as response:
+            async with session.get(item, headers=headers) as response:
                 json_data: dict = await response.json()
 
                 items.append(json_data[params[1]])
                 BUFFER[item] = items[-1]
     
     people_json[params[0]] = ', '.join(items)
+
+async def get_extra_items_by_string(session, people_json: dict, params: tuple, headers: dict=HEADERS) -> None:
+    item = people_json[params[0]]
+
+    if item in BUFFER:
+        people_json[params[0]] = BUFFER[item]
+
+    else:
+        async with session.get(item, headers=headers) as response:
+            json_data: dict = await response.json()
+
+            people_json[params[0]] = json_data[params[1]]
+            BUFFER[item] = json_data[params[1]]
     
 async def get_people(session, person_id: int) -> Coroutine:
     async with session.get(f'https://swapi.py4e.com/api/people/{person_id}/') as response:
@@ -40,19 +54,22 @@ async def get_people(session, person_id: int) -> Coroutine:
             json_data.pop('url')
 
             films_coroutines = list()
+            homeworld_coroutines = list()
             species_coroutines = list()
             starships_coroutines = list()
             vehicles_coroutines = list()
 
-            films_coroutines.append(get_extra_items(session, json_data, ('films', 'title')))
+            films_coroutines.append(get_extra_items_by_list(session, json_data, ('films', 'title')))
 
-            species_coroutines.append(get_extra_items(session, json_data, ('species', 'name')))
+            homeworld_coroutines.append(get_extra_items_by_string(session, json_data, ('homeworld', 'name')))
 
-            starships_coroutines.append(get_extra_items(session, json_data, ('starships', 'name')))
+            species_coroutines.append(get_extra_items_by_list(session, json_data, ('species', 'name')))
 
-            vehicles_coroutines.append(get_extra_items(session, json_data, ('vehicles', 'name')))
+            starships_coroutines.append(get_extra_items_by_list(session, json_data, ('starships', 'name')))
 
-            coroutines = films_coroutines + species_coroutines + starships_coroutines + vehicles_coroutines
+            vehicles_coroutines.append(get_extra_items_by_list(session, json_data, ('vehicles', 'name')))
+
+            coroutines = films_coroutines + species_coroutines + starships_coroutines + vehicles_coroutines + homeworld_coroutines
             await asyncio.gather(*coroutines)
 
             return json_data
@@ -85,4 +102,4 @@ async def main() -> None:
 if __name__ == '__main__':
     start = datetime.datetime.now()
     asyncio.run(main())
-    print(datetime.datetime.now() - start)
+    print(f'Время выполнения кода: {datetime.datetime.now() - start}')
