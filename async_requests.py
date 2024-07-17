@@ -1,5 +1,4 @@
 import datetime
-from pprint import pprint
 from typing import Coroutine
 
 import asyncio
@@ -9,7 +8,28 @@ from models import Session, init_orm, SwapiPeople
 from more_itertools import chunked
 
 MAX_CHUNK = 10
+BUFFER = dict()
 
+async def get_extra_items(session, people_json: dict, params: tuple) -> None:
+    items = list()
+
+    for item in people_json[params[0]]:
+        if item in BUFFER:
+            items.append(BUFFER[item])
+
+        else:
+            async with session.get(item, headers = {
+                "Accept": "*/*",
+                "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)\
+                AppleWebKit/537.36 (KHTML, like Gecko) Chrome/102.0.5005.167 YaBrowser/22.7.3.799 Yowser/2.5 Safari/537.36"
+            }) as response:
+                json_data: dict = await response.json()
+
+                items.append(json_data[params[1]])
+                BUFFER[item] = items[-1]
+    
+    people_json[params[0]] = ', '.join(items)
+    
 async def get_people(session, person_id: int) -> Coroutine:
     async with session.get(f'https://swapi.py4e.com/api/people/{person_id}/') as response:
         json_data: dict = await response.json()
@@ -19,21 +39,26 @@ async def get_people(session, person_id: int) -> Coroutine:
             json_data.pop('edited')
             json_data.pop('url')
 
+            films_coroutines = list()
+            species_coroutines = list()
+            starships_coroutines = list()
+            vehicles_coroutines = list()
+
+            films_coroutines.append(get_extra_items(session, json_data, ('films', 'title')))
+
+            species_coroutines.append(get_extra_items(session, json_data, ('species', 'name')))
+
+            starships_coroutines.append(get_extra_items(session, json_data, ('starships', 'name')))
+
+            vehicles_coroutines.append(get_extra_items(session, json_data, ('vehicles', 'name')))
+
+            coroutines = films_coroutines + species_coroutines + starships_coroutines + vehicles_coroutines
+            await asyncio.gather(*coroutines)
+
             return json_data
-    
-async def get_extra_items(session, people_json: dict, params: tuple) -> None:
-    items = list()
-
-    for item in people_json[params[0]]:
-        async with session.get(item) as response:
-            json_data: dict = await response.json()
-
-            items.append(json_data[params[1]])
-    
-    people_json[params[0]] = ', '.join(items)
 
 async def insert_people(list_people_json: list) -> None:
-    orm_objects = [SwapiPeople(**people_json) for people_json in list_people_json]
+    orm_objects = [SwapiPeople(**people_json) for people_json in list_people_json if people_json is not None]
 
     async with Session() as session:
         session.add_all(orm_objects)
@@ -43,33 +68,12 @@ async def main() -> None:
     await init_orm()
     
     async with aiohttp.ClientSession() as session:
-        chunked_people_ids = chunked(range (1, 51), MAX_CHUNK)
+        chunked_people_ids = chunked(range (1, 101), MAX_CHUNK)
 
         for people_ids in chunked_people_ids:
             people_coroutines = [get_people(session, people_id) for people_id in people_ids]
 
             list_people_json = await asyncio.gather(*people_coroutines)
-
-            films_coroutines = list()
-            species_coroutines = list()
-            starships_coroutines = list()
-            vehicles_coroutines = list()
-
-            for people_json in list_people_json:
-                if people_json is None:
-                    list_people_json.remove(people_json)
-                    continue
-                
-                films_coroutines.append(get_extra_items(session, people_json, ('films', 'title')))
-
-                species_coroutines.append(get_extra_items(session, people_json, ('species', 'name')))
-
-                starships_coroutines.append(get_extra_items(session, people_json, ('starships', 'name')))
-
-                vehicles_coroutines.append(get_extra_items(session, people_json, ('vehicles', 'name')))
-
-            coroutines = films_coroutines + species_coroutines + starships_coroutines + vehicles_coroutines
-            await asyncio.gather(*coroutines)
 
             asyncio.create_task(insert_people(list_people_json))
 
